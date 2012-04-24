@@ -1,6 +1,17 @@
 (ns cljs.core-test)
 
 (defn test-stuff []
+  ;; -equiv
+  (assert (= 1))
+  (assert (= 1 1))
+  (assert (= 1 1 1))
+  (assert (= 1 1 1 1))
+  (assert (not (= 1 2)))
+  (assert (not (= 1 2 1)))
+  (assert (not (= 1 1 2)))
+  (assert (not (= 1 1 2 1)))
+  (assert (not (= 1 1 1 2)))
+  
   ;; arithmetic
   (assert (= (+) 0))
   (assert (= (apply + []) 0))
@@ -148,6 +159,15 @@
 
   (assert (= [[1 1] [1 2] [1 3] [2 1] [2 2] [2 3]]
              (map #(%) (for [i [1 2] j [1 2 3]] (fn [] [i j])))))
+
+  (assert (= 42 (int 42.5)))
+  (assert (integer? (int 42.5)))
+
+  (assert (= 42 (long 42.5)))
+  (assert (integer? (long 42.5)))
+
+  (assert (= -1 (int -1.5)))
+  (assert (= -9 (long -9.8)))
 
   (assert (= 2 (:b {:a 1 :b 2})))
   (assert (= 2 ('b '{:a 1 b 2})))
@@ -581,6 +601,12 @@
     (assert (not= (seq a) (seq (to-array [1 2 3]))))
     (assert (not= a (aclone a))))
 
+  (let [a (array (array 1 2 3) (array 4 5 6))]
+    (assert (= (aget a 0 1) 2))
+    (assert (= (apply aget a [0 1]) 2))
+    (assert (= (aget a 1 1) 5))
+    (assert (= (apply aget a [1 1]) 5)))
+
   ;; sort
   (assert (= [1 2 3 4 5] (sort [5 3 1 4 2])))
   (assert (= [1 2 3 4 5] (sort < [5 3 1 4 2])))
@@ -592,6 +618,8 @@
 
   ;; js->clj
   (assert (= {"a" 1, "b" 2} (js->clj (js* "{\"a\":1,\"b\":2}"))))
+  (assert (= {"a" nil} (js->clj (js* "{\"a\":null}"))))
+  (assert (= {"a" true, "b" false} (js->clj (js* "{\"a\":true,\"b\":false}"))))
   (assert (= {:a 1, :b 2} (js->clj (js* "{\"a\":1,\"b\":2}") :keywordize-keys true)))
   (assert (= [[{:a 1, :b 2} {:a 1, :b 2}]]
                (js->clj (js* "[[{\"a\":1,\"b\":2}, {\"a\":1,\"b\":2}]]") :keywordize-keys true)))
@@ -819,11 +847,11 @@
   (assert (= :nested-a (nested-dispatch2 [[:a :b]])))
 
   ;; general tests
-  (defmulti foo (fn [& args] (first args)))
-  (defmethod foo :a [& args] :a-return)
-  (defmethod foo :default [& args] :default-return)
-  (assert (= :a-return (foo :a)))
-  (assert (= :default-return (foo 1)))
+  (defmulti foo1 (fn [& args] (first args)))
+  (defmethod foo1 :a [& args] :a-return)
+  (defmethod foo1 :default [& args] :default-return)
+  (assert (= :a-return (foo1 :a)))
+  (assert (= :default-return (foo1 1)))
 
   (defmulti area :Shape)
   (defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
@@ -879,6 +907,14 @@
     (assert (= (nth pv 97 nil) nil))
     (assert (= (pv 96) 96)))
 
+  (let [pv (vec (range 33))]
+    (assert (= pv
+               (-> pv
+                   pop
+                   pop
+                   (conj 31)
+                   (conj 32)))))
+  
   (let [stack1 (pop (vec (range 97)))
         stack2 (pop stack1)]
     (assert (= 95 (peek stack1)))
@@ -903,6 +939,181 @@
     (assert (= 27 (reduce + s)))
     (assert (= s (vec s))) ; pour into plain vector
     (let [m {:x 1}] (assert (= m (meta (with-meta s m))))))
+
+  ;; PersistentHashMap & TransientHashMap
+  (loop [m1 cljs.core.PersistentHashMap/EMPTY
+         m2 (transient cljs.core.PersistentHashMap/EMPTY)
+         i 0]
+    (if (< i 100)
+      (recur (assoc m1 i i) (assoc! m2 i i) (inc i))
+      (let [m2 (persistent! m2)]
+        (assert (= (count m1) 100))
+        (assert (= (count m2) 100))
+        (assert (= m1 m2))
+        (loop [i 0]
+          (if (< i 100)
+            (do (assert (= (m1 i) i))
+                (assert (= (m2 i) i))
+                (assert (= (get m1 i) i))
+                (assert (= (get m2 i) i))
+                (assert (contains? m1 i))
+                (assert (contains? m2 i))
+                (recur (inc i)))))
+        (assert (= (map vector (range 100) (range 100)) (sort-by first (seq m1))))
+        (assert (= (map vector (range 100) (range 100)) (sort-by first (seq m2))))
+        (assert (not (contains? (dissoc m1 3) 3))))))
+  (let [m (-> (->> (interleave (range 10) (range 10))
+                   (apply assoc cljs.core.PersistentHashMap/EMPTY))
+              (dissoc 3 5 7))]
+    (assert (= (count m) 7))
+    (assert (= m {0 0 1 1 2 2 4 4 6 6 8 8 9 9})))
+  (let [m (-> (->> (interleave (range 10) (range 10))
+                   (apply assoc cljs.core.PersistentHashMap/EMPTY))
+              (conj [:foo 1]))]
+    (assert (= (count m) 11))
+    (assert (= m {0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8 9 9 :foo 1})))
+  (let [m (-> (->> (interleave (range 10) (range 10))
+                   (apply assoc cljs.core.PersistentHashMap/EMPTY)
+                   transient)
+              (conj! [:foo 1])
+              persistent!)]
+    (assert (= (count m) 11))
+    (assert (= m {0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8 9 9 :foo 1})))
+  (let [tm (->> (interleave (range 10) (range 10))
+                (apply assoc cljs.core.PersistentHashMap/EMPTY)
+                transient)]
+    (loop [tm tm ks [3 5 7]]
+      (if-let [k (first ks)]
+        (recur (dissoc! tm k) (next ks))
+        (let [m (persistent! tm)]
+          (assert (= (count m) 7))
+          (assert (= m {0 0 1 1 2 2 4 4 6 6 8 8 9 9}))))))
+  (let [tm (-> (->> (interleave (range 10) (range 10))
+                    (apply assoc cljs.core.PersistentHashMap/EMPTY))
+               (dissoc 3 5 7)
+               transient)]
+    (doseq [k [0 1 2 4 6 8 9]]
+      (assert (= k (get tm k))))
+    (let [m (persistent! tm)]
+      (assert (= 2 (try (dissoc! tm 1) 1 (catch js/Error e 2))))
+      (assert (= 2 (try (assoc! tm 10 10) 1 (catch js/Error e 2))))
+      (assert (= 2 (try (persistent! tm) 1 (catch js/Error e 2))))
+      (assert (= 2 (try (count tm) 1 (catch js/Error e 2))))
+      (assert (= m {0 0 1 1 2 2 4 4 6 6 8 8 9 9}))))
+  (deftype FixedHash [h v]
+    IHash
+    (-hash [this] h)
+    IEquiv
+    (-equiv [this other]
+      (and (instance? FixedHash other) (= v (.-v other)))))
+  (def fixed-hash-foo (FixedHash. 0 :foo))
+  (def fixed-hash-bar (FixedHash. 0 :bar))
+  (let [m (assoc cljs.core.PersistentHashMap/EMPTY
+            fixed-hash-foo 1
+            fixed-hash-bar 2)]
+    (assert (= (get m fixed-hash-foo) 1))
+    (assert (= (get m fixed-hash-bar) 2))
+    (assert (= (count m) 2))
+    (let [m (dissoc m fixed-hash-foo)]
+      (assert (= (get m fixed-hash-bar) 2))
+      (assert (not (contains? m fixed-hash-foo)))
+      (assert (= (count m) 1))))
+  (let [m (into cljs.core.PersistentHashMap/EMPTY ; make sure we're testing
+                (zipmap (range 100) (range 100))) ; the correct map type
+        m (assoc m fixed-hash-foo 1 fixed-hash-bar 2)]
+    (assert (= (count m) 102))
+    (assert (= (get m fixed-hash-foo) 1))
+    (assert (= (get m fixed-hash-bar) 2))
+    (let [m (dissoc m 3 5 7 fixed-hash-foo)]
+      (assert (= (get m fixed-hash-bar) 2))
+      (assert (not (contains? m fixed-hash-foo)))
+      (assert (= (count m) 98))))
+  (let [m (into cljs.core.PersistentHashMap/EMPTY ; make sure we're testing
+                (zipmap (range 100) (range 100))) ; the correct map type
+        m (transient m)
+        m (assoc! m fixed-hash-foo 1)
+        m (assoc! m fixed-hash-bar 2)
+        m (persistent! m)]
+    (assert (= (count m) 102))
+    (assert (= (get m fixed-hash-foo) 1))
+    (assert (= (get m fixed-hash-bar) 2))
+    (let [m (dissoc m 3 5 7 fixed-hash-foo)]
+      (assert (= (get m fixed-hash-bar) 2))
+      (assert (not (contains? m fixed-hash-foo)))
+      (assert (= (count m) 98))))
+
+  ;; PersistentTreeMap
+  (let [m1 (sorted-map)
+        c2 (comp - compare)
+        m2 (sorted-map-by c2)]
+    (assert (identical? cljs.core.PersistentTreeMap (type m1)))
+    (assert (identical? cljs.core.PersistentTreeMap (type m2)))
+    (assert (identical? compare (.-comp m1)))
+    (assert (identical? c2 (.-comp m2)))
+    (assert (zero? (count m1)))
+    (assert (zero? (count m2)))
+    (let [m1 (assoc m1 :foo 1 :bar 2 :quux 3)
+          m2 (assoc m2 :foo 1 :bar 2 :quux 3)]
+      (assert (= (count m1) 3))
+      (assert (= (count m2) 3))
+      (assert (= (seq m1) (list [:bar 2] [:foo 1] [:quux 3])))
+      (assert (= (seq m2) (list [:quux 3] [:foo 1] [:bar 2])))
+      (assert (= (seq m1) (rseq m2)))
+      (assert (= (seq m2) (rseq m1)))
+      (assert (= (conj m1 [:wibble 4]) {:foo 1 :bar 2 :quux 3 :wibble 4}))
+      (assert (= (count (conj m1 [:wibble 4])) 4))
+      (assert (= (conj m2 [:wibble 4]) {:foo 1 :bar 2 :quux 3 :wibble 4}))
+      (assert (= (count (conj m2 [:wibble 4])) 4))
+      (assert (= (map key (assoc m1 nil 4)) (list nil :bar :foo :quux)))
+      (assert (= (map key (assoc m2 nil 4)) (list :quux :foo :bar nil)))))
+  (let [m (->> [[0 10] [20 30] [10 20] [50 60] [30 40] [40 50]]
+               (mapcat (partial apply range))
+               (mapcat #(list % %))
+               (apply sorted-map))
+        s1 (map #(vector % %) (range 60))
+        s2 (map #(vector % %) (range 59 -1 -1))]
+    (assert (= (count m) 60))
+    (assert (= (seq m) s1))
+    (assert (= (rseq m) s2)))
+  (let [m (sorted-map :foo 1 :bar 2 :quux 3)]
+    (assert (= (dissoc m :foo) (hash-map :bar 2 :quux 3)))
+    (assert (= (count (dissoc m :foo)) 2))
+    (assert (= (hash m) (hash (hash-map :foo 1 :bar 2 :quux 3))))
+    (assert (= (subseq m < :foo)  (list [:bar 2])))
+    (assert (= (subseq m <= :foo) (list [:bar 2] [:foo 1])))
+    (assert (= (subseq m > :foo)  (list [:quux 3])))
+    (assert (= (subseq m >= :foo) (list [:foo 1] [:quux 3])))
+    (assert (= (map #(reduce (fn [_ x] x) %) m) (list 2 1 3)))
+    (assert (= (map #(reduce (fn [x _] x) 7 %) m) (list 7 7 7))))
+
+  ;; PersistentTreeSet
+  (let [s1 (sorted-set)
+        c2 (comp - compare)
+        s2 (sorted-set-by c2)]
+    (assert (identical? cljs.core.PersistentTreeSet (type s1)))
+    (assert (identical? cljs.core.PersistentTreeSet (type s2)))
+    (assert (identical? compare (-comparator s1)))
+    (assert (identical? c2 (-comparator s2)))
+    (assert (zero? (count s1)))
+    (assert (zero? (count s2)))
+    (let [s1 (conj s1 1 2 3)
+          s2 (conj s2 1 2 3)]
+      (assert (= (hash s1) (hash s2)))
+      (assert (= (hash s1) (hash #{1 2 3})))
+      (assert (= (seq s1)  (list 1 2 3)))
+      (assert (= (rseq s1) (list 3 2 1)))
+      (assert (= (seq s2)  (list 3 2 1)))
+      (assert (= (rseq s2) (list 1 2 3)))
+      (assert (= (count s1) 3))
+      (assert (= (count s2) 3))
+      (let [s1 (disj s1 2)
+            s2 (disj s2 2)]
+        (assert (= (seq s1)  (list 1 3)))
+        (assert (= (rseq s1) (list 3 1)))
+        (assert (= (seq s2)  (list 3 1)))
+        (assert (= (rseq s2) (list 1 3)))
+        (assert (= (count s1) 2))
+        (assert (= (count s2) 2)))))
 
   ;; defrecord
   (defrecord Person [firstname lastname])
@@ -971,9 +1182,9 @@
   (assert (= (meta (with-meta (reify IFoo (foo [this] :foo)) {:foo :bar}))
              {:foo :bar}))
 
-  (defmulti foo identity)
-  (defmethod foo 0 [x] x)
-  (assert (= foo (ffirst {foo 1})))
+  (defmulti foo2 identity)
+  (defmethod foo2 0 [x] x)
+  (assert (= foo2 (ffirst {foo2 1})))
 
   (defprotocol IMutate
     (mutate [this]))
@@ -1044,6 +1255,17 @@
     (assert (= (-get-first fs) \a))
     (assert (= (-find-first fv [1]) 1))
     (assert (identical? (fv 1) fv)))
+
+  (let [x 1]
+    (assert (= (case x 1 :one) :one)))
+  (let [x 1]
+    (assert (= (case x 2 :two :default) :default)))
+  (let [x 1]
+    (assert (= (try
+                 (case x 3 :three)
+                 (catch js/Error e
+                     :fail))
+               :fail)))
 
   :ok
   )

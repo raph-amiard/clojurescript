@@ -42,23 +42,38 @@
   or
   when when-first when-let when-not while])
 
+(defn bool-expr [e]
+  (vary-meta e assoc :tag 'boolean))
+
 (defmacro nil? [x]
   `(identical? ~x nil))
 
+;; internal - do not use.
+(defmacro coercive-not= [x y]
+  (bool-expr (list 'js* "(~{} != ~{})" x y)))
+
+;; internal - do not use.
+(defmacro coercive-= [x y]
+  (bool-expr (list 'js* "(~{} == ~{})" x y)))
+
 (defmacro true? [x]
-  (list 'js* "~{} === true" x))
+  (bool-expr (list 'js* "~{} === true" x)))
 
 (defmacro false? [x]
-  (list 'js* "~{} === false" x))
+  (bool-expr (list 'js* "~{} === false" x)))
 
 (defmacro undefined? [x]
-  (list 'js* "(void 0 === ~{})" x))
+  (bool-expr (list 'js* "(void 0 === ~{})" x)))
 
 (defmacro identical? [a b]
-  (list 'js* "(~{} === ~{})" a b))
+  (bool-expr (list 'js* "(~{} === ~{})" a b)))
 
-(defmacro aget [a i]
-  (list 'js* "(~{}[~{}])" a i))
+(defmacro aget
+  ([a i]
+     (list 'js* "(~{}[~{}])" a i))
+  ([a i & idxs]
+     (let [astr (apply str (repeat (count idxs) "[~{}]"))]
+      `(~'js* ~(str "(~{}[~{}]" astr ")") ~a ~i ~@idxs))))
 
 (defmacro aset [a i v]
   (list 'js* "(~{}[~{}] = ~{})" a i v))
@@ -87,27 +102,27 @@
 
 (defmacro <
   ([x] true)
-  ([x y] (list 'js* "(~{} < ~{})" x y))
+  ([x y] (bool-expr (list 'js* "(~{} < ~{})" x y)))
   ([x y & more] `(and (< ~x ~y) (< ~y ~@more))))
 
 (defmacro <=
   ([x] true)
-  ([x y] (list 'js* "(~{} <= ~{})" x y))
+  ([x y] (bool-expr (list 'js* "(~{} <= ~{})" x y)))
   ([x y & more] `(and (<= ~x ~y) (<= ~y ~@more))))
 
 (defmacro >
   ([x] true)
-  ([x y] (list 'js* "(~{} > ~{})" x y))
+  ([x y] (bool-expr (list 'js* "(~{} > ~{})" x y)))
   ([x y & more] `(and (> ~x ~y) (> ~y ~@more))))
 
 (defmacro >=
   ([x] true)
-  ([x y] (list 'js* "(~{} >= ~{})" x y))
+  ([x y] (bool-expr (list 'js* "(~{} >= ~{})" x y)))
   ([x y & more] `(and (>= ~x ~y) (>= ~y ~@more))))
 
 (defmacro ==
   ([x] true)
-  ([x y] (list 'js* "(~{} === ~{})" x y))
+  ([x y] (bool-expr (list 'js* "(~{} === ~{})" x y)))
   ([x y & more] `(and (== ~x ~y) (== ~y ~@more))))
 
 (defmacro dec [x]
@@ -172,8 +187,19 @@
 (defmacro bit-shift-right [x n]
   (list 'js* "(~{} >> ~{})" x n))
 
+(defmacro bit-shift-right-zero-fill [x n]
+  (list 'js* "(~{} >>> ~{})" x n))
+
 (defmacro bit-set [x n]
   (list 'js* "(~{} | (1 << ~{}))" x n))
+
+;; internal
+(defmacro mask [hash shift]
+  (list 'js* "((~{} >>> ~{}) & 0x01f)" hash shift))
+
+;; internal
+(defmacro bitpos [hash shift]
+  (list 'js* "(1 << ~{})" `(mask ~hash ~shift)))
 
 (defn- protocol-prefix [psym]
   (str (.replace (str psym) \. \$) "$"))
@@ -241,22 +267,33 @@
                                         `(set! ~(symbol (str prototype-prefix f)) (fn ~@(map adapt-params meths))))
                                       sigs))
                                (cons `(set! ~(symbol (str prototype-prefix pprefix)) true)
-                                     (map (fn [[f & meths]]
-                                            (let [ifn? (= psym 'cljs.core.IFn)
-                                                  pf (if ifn?
-                                                       (str prototype-prefix 'call)
-                                                       (str prototype-prefix pprefix f))
-                                                  adapt-params (fn [[[targ & args :as sig] & body]]
-                                                                 (let [tsym (gensym "tsym")]
-                                                                   `(~(with-meta (vec (cons tsym args)) (meta sig))
-                                                                     (this-as ~tsym
-                                                                              (let [~targ ~tsym]
-                                                                                ~@body)))))
-                                                  meths (if ifn?
-                                                          (map adapt-params meths)
-                                                          meths)]
-                                              `(set! ~(symbol pf) (fn ~@meths))))
-                                          sigs)))))]
+                                     (mapcat (fn [[f & meths]]
+                                               (let [ifn? (= psym 'cljs.core.IFn)
+                                                     pf (if ifn?
+                                                          (str prototype-prefix 'call)
+                                                          (str prototype-prefix pprefix f))
+                                                     adapt-params (fn [[[targ & args :as sig] & body]]
+                                                                    (let [tsym (gensym "tsym")]
+                                                                      `(~(with-meta (vec (cons tsym args)) (meta sig))
+                                                                        (this-as ~tsym
+                                                                                 (let [~targ ~tsym]
+                                                                                   ~@body)))))
+                                                     meths (if ifn?
+                                                             (map adapt-params meths)
+                                                             meths)]
+                                                 (cond 
+                                                  ifn?
+                                                  [`(set! ~(symbol pf) (fn ~@meths))]
+                                                  
+                                                  (vector? (first meths))
+                                                  [`(set! ~(symbol (str pf "$arity$" (count (first meths)))) (fn ~@meths))]
+
+                                                  :else
+                                                  (map (fn [[sig & body :as meth]]
+                                                         `(set! ~(symbol (str pf "$arity$" (count sig)))
+                                                                (fn ~meth)))
+                                                       meths))))
+                                             sigs)))))]
         `(do ~@(mapcat assign-impls impl-map))))))
 
 (defmacro deftype [t fields & impls]
@@ -414,10 +451,16 @@
         method (fn [[fname & sigs]]
                  (let [sigs (take-while vector? sigs)
                        slot (symbol (str prefix (name fname)))]
-                   `(defn ~fname ~@(map #(expand-sig fname slot %) sigs))))]
+                   `(defn ~fname ~@(map (fn [sig]
+                                          (expand-sig fname
+                                                      (symbol (str slot "$arity$" (count sig)))
+                                                      sig))
+                                        sigs))))]
     `(do
+       (set! ~'*unchecked-if* true)
        (def ~psym (~'js* "{}"))
-       ~@(map method methods))))
+       ~@(map method methods)
+       (set! ~'*unchecked-if* false))))
 
 (defmacro satisfies?
   "Returns true if x satisfies the protocol"
@@ -455,6 +498,7 @@
         tempnames (map (comp gensym name) names)
         binds (map vector names vals)
         resets (reverse (map vector names tempnames))]
+    (cljs.compiler/confirm-bindings &env names)
     `(let [~@(interleave tempnames names)]
        (try
         ~@(map
@@ -507,6 +551,15 @@
     `(let [~gpred ~pred
            ~gexpr ~expr]
        ~(emit gpred gexpr clauses))))
+
+(defmacro case [e & clauses]
+  (let [default (if (odd? (count clauses))
+                  (last clauses)
+                  `(throw (js/Error. (str "No matching clause: " ~e))))
+        pairs (partition 2 clauses)]
+   `(condp = ~e
+      ~@(apply concat pairs)
+      ~default)))
 
 (defmacro try
   "(try expr* catch-clause* finally-clause?)
@@ -654,6 +707,15 @@
    (concat
     (list 'js* (str "[" xs-str "]"))
     rest)))
+
+(defmacro js-obj [& rest]
+  (let [kvs-str (->> (repeat "~{}:~{}")
+                     (take (quot (count rest) 2))
+                     (interpose ",")
+                     (apply str))]
+    (concat
+     (list 'js* (str "{" kvs-str "}"))
+     rest)))
 
 (defmacro alength [a]
   (list 'js* "~{}.length" a))

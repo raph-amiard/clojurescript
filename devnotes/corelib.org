@@ -1,8 +1,8 @@
 * DONE *
 * *'
-* TODO *1
-* TODO *2
-* TODO *3
+* DONE *1
+* DONE *2
+* DONE *3
 * *agent*
 * *allow-unresolved-vars*
 * *assert*
@@ -117,7 +117,7 @@ does what?
 * TODO byte
 * byte-array
 * bytes
-* TODO case
+* DONE case
 * cast
 * char
 * char-array
@@ -173,7 +173,7 @@ does what?
 * DONE defn-
 * defonce
 * DONE defprotocol
-* TODO defrecord
+* DONE defrecord
 * defstruct
 * DONE deftype
 * DONE delay
@@ -198,7 +198,7 @@ For macros only, uses clojure.core version
 * DONE dotimes
 * DONE doto
 * TODO double
-* TODO double-array
+* DONE double-array
 * TODO doubles
 * DONE drop
 * DONE drop-last
@@ -269,7 +269,7 @@ macro currently expands into extend call
 * DONE identity
 * DONE if-let
 * DONE if-not
-* TODO ifn?
+* DONE ifn?
 * import
 * DONE in-ns
 * DONE inc
@@ -277,14 +277,14 @@ macro currently expands into extend call
 * init-proxy
 * DONE instance?
 does what?
-* int
+* DONE int
 * int-array
 * DONE integer?
 * DONE interleave
 * intern
 * DONE interpose
 * DONE into
-* TODO into-array
+* DONE into-array
 * ints
 * io!
 * DONE isa?
@@ -294,7 +294,7 @@ does what?
 * DONE juxt
 * DONE keep
 * DONE keep-indexed
-* TODO key
+* DONE key
 * DONE keys
 * DONE keyword
 * DONE keyword?
@@ -307,20 +307,20 @@ does what?
 * line-seq
 * DONE list
 * DONE list*
-* TODO list?
+* DONE list?
 * load
 * DONE load-file
 * load-reader
 * load-string
 * loaded-libs
 * locking
-* TODO long
-* TODO long-array
+* DONE long
+* DONE long-array
 * TODO longs
 * DONE loop
 * macroexpand
 * macroexpand-1
-* TODO make-array
+* DONE make-array
 * DONE make-hierarchy
 * DONE map
 * DONE map-indexed
@@ -369,7 +369,7 @@ does what?
 * TODO num
 * DONE number?
 * TODO numerator
-* TODO object-array
+* DONE object-array
 * DONE odd?
 * DONE or
 * DONE parents
@@ -414,7 +414,7 @@ dunno about printing
 * DONE rand
 * DONE rand-int
 * DONE rand-nth
-* TODO range
+* DONE range
 * TODO ratio?
 * TODO rational?
 * TODO rationalize
@@ -438,8 +438,8 @@ dunno about regex
 * ref-set
 * refer
 * refer-clojure
-* TODO reify
-also specify - make a particular object extend a protocol
+* DONE reify
+* TODO specify - make a particular object extend a protocol
 * release-pending-sends
 * DONE rem
 * DONE remove
@@ -460,8 +460,8 @@ ticket #8
 * restart-agent
 * resultset-seq
 * DONE reverse
-* TODO reversible?
-* TODO rseq
+* DONE reversible?
+* DONE rseq
 * TODO rsubseq
 * DONE satisfies?
 as macro
@@ -504,7 +504,7 @@ as macro
 * struct-map
 * DONE subs
 * TODO subseq
-* TODO subvec
+* DONE subvec
 * TODO supers
 * DONE swap!
 * DONE symbol
@@ -519,13 +519,12 @@ as macro
 * thread-bound?
 * DONE time
 * DONE to-array
-* TODO to-array-2d
+* DONE to-array-2d
 * DONE trampoline
 * transient
 * DONE tree-seq
 * DONE true?
-* TODO type
-does what?
+* DONE type - returns JS constructor
 * TODO unchecked-add
 * TODO unchecked-add-int
 * TODO unchecked-byte
@@ -553,7 +552,7 @@ does what?
 * DONE update-in
 * update-proxy
 * use
-* TODO val
+* DONE val
 * DONE vals
 * var-get
 * var-set

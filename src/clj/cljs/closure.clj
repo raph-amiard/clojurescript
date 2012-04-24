@@ -861,6 +861,7 @@
 (defn build
   "Given a source which can be compiled, produce runnable JavaScript."
   [source opts]
+  (comp/reset-namespaces!)
   (let [opts (if (= :nodejs (:target opts))
                (merge {:optimizations :simple} opts)
                opts)
@@ -869,7 +870,11 @@
                         :ups-libs (:libs ups-deps)
                         :ups-foreign-libs (:foreign-libs ups-deps)
                         :ups-externs (:externs ups-deps))
-        compiled (-compile source all-opts)
+        compiled (binding [comp/*cljs-static-fns*
+                           (or (and (= (opts :optimizations) :advanced))
+                               (:static-fns opts)
+                               comp/*cljs-static-fns*)]
+                   (-compile source all-opts))
         compiled (concat
                    (if (coll? compiled) compiled [compiled])
                    (when (= :nodejs (:target all-opts))
