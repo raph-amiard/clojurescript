@@ -17,6 +17,7 @@
 (declare resolve-var)
 (require 'cljs.core)
 
+; TODO: Redefine for LUA
 (def js-reserved
   #{"abstract" "boolean" "break" "byte" "case"
     "catch" "char" "class" "const" "continue"
@@ -181,7 +182,7 @@
   (str \" x \"))
 
 (defmulti emit-constant class)
-(defmethod emit-constant nil [x] (print "null"))
+(defmethod emit-constant nil [x] (print "nil"))
 (defmethod emit-constant Long [x] (print x))
 (defmethod emit-constant Integer [x] (print x)) ; reader puts Integers in metadata
 (defmethod emit-constant Double [x] (print x))
@@ -315,8 +316,8 @@
   [{:keys [test then else env]}]
   (let [context (:context env)]
     (if (= :expr context)
-      (print (str "(cljs.core.truth_(" (emits test) ")?" (emits then) ":" (emits else) ")"))
-      (print (str "if(cljs.core.truth_(" (emits test) "))\n{" (emits then) "} else\n{" (emits else) "}\n")))))
+      (print (str "function() if (cljs.core.truth_(" (emits test) ") then return " (emits then) " else return " (emits else) " end"))
+      (print (str "if (cljs.core.truth_(" (emits test) ")) then\n" (emits then) " else\n" (emits else) "end\n")))))
 
 (defmethod emit :throw
   [{:keys [throw env]}]
@@ -331,13 +332,13 @@
         docs (if jsdoc (concat docs jsdoc) docs)
         docs (remove nil? docs)]
     (letfn [(print-comment-lines [e] (doseq [next-line (string/split-lines e)]
-                                       (println "*" (string/trim next-line))))]
+                                       (println "" (string/trim next-line))))]
       (when (seq docs)
-        (println "/**")
+        (println "--[")
         (doseq [e docs]
           (when e
             (print-comment-lines e)))
-        (println "*/")))))
+        (println "--]")))))
 
 (defmethod emit :def
   [{:keys [name init env doc export]}]
