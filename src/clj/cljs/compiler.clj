@@ -71,7 +71,7 @@
                (str (subs ss 0 idx)
                     (clojure.lang.Compiler/munge (subs ss idx))))
              (clojure.lang.Compiler/munge ss))
-        ms (if (js-reserved ms) (str ms "$") ms)]
+        ms (if (js-reserved ms) (str ms "__") ms)]
     (if (symbol? s)
       (symbol ms)
       ms)))
@@ -263,6 +263,9 @@
 (defmethod emit-constant Character [x]
   (emits (wrap-in-double-quotes (escape-char x))))
 
+;; TODO : Find a way to use regex in Lua
+;; Or to deactivate clojurescript regex support
+;; See -> lrexlib, well supported posix regex lib for Lua
 (defmethod emit-constant java.util.regex.Pattern [x]
   (let [[_ flags pattern] (re-find #"^(?:\(\?([idmsux]*)\))?(.*)" (str x))]
     (emits \/ (.replaceAll (re-matcher #"/" pattern) "\\\\/") \/ flags)))
@@ -336,7 +339,7 @@
      (when-not (= :expr (:context env#)) (emitln ";"))))
 
 (defmethod emit :no-op
-  [m] (emits "void 0;"))
+  [m] (emitln "cljs.core.luaops.noop()"))
 
 (defmethod emit :var
   [{:keys [info env] :as arg}]
@@ -401,13 +404,15 @@
   (let [context (:context env)
         checked (not (or unchecked (safe-test? test)))]
     (if (= :expr context)
-      (emits "(" (when checked "cljs.core.truth_") "(" test ")?" then ":" else ")")
+        (emits "(function () if " (when checked "cljs.core.truth_") "(" test ") then return " then " else return" else " end)()")
       (do
         (if checked
-          (emitln "if(cljs.core.truth_(" test "))")
-          (emitln "if(" test ")"))
-        (emitln "{" then "} else")
-        (emitln "{" else "}")))))
+          (emitln "if (cljs.core.truth_(" test ")) then ")
+          (emitln "if(" test ") then "))
+        (emitln then)
+        (emitln "else")
+        (emitln else)
+        (emitln "end")))))
 
 (defmethod emit :throw
   [{:keys [throw env]}]
@@ -422,12 +427,13 @@
         docs (if jsdoc (concat docs jsdoc) docs)
         docs (remove nil? docs)]
     (letfn [(print-comment-lines [e] (doseq [next-line (string/split-lines e)]
+                                       (emitln " " (string/trim next-line))))]
       (when (seq docs)
-        (emitln "/**")
+        (emitln "--[[")
         (doseq [e docs]
           (when e
             (print-comment-lines e)))
-        (emitln "*/")))))
+        (emitln "--]]")))))
 
 (defmethod emit :def
   [{:keys [name init env doc export]}]
@@ -436,98 +442,99 @@
       (emit-comment doc (:jsdoc init))
       (emits name)
       (emits " = " init)
-      (when-not (= :expr (:context env)) (emitln ";"))
+      (when-not (= :expr (:context env)) (emitln ""))
       (when export
         (emitln "goog.exportSymbol('" export "', " name ");")))
-    (emitln "void 0;")))
+    (emitln "cljs.core.luaops.noop()")))
 
 (defn emit-apply-to
   [{:keys [name params env]}]
   (let [arglist (gensym "arglist__")
         delegate-name (str name "__delegate")]
-    (emitln "(function (" arglist "){")
+    (emitln "(function (" arglist ")")
     (doseq [[i param] (map-indexed vector (butlast params))]
-      (emits "var " param " = cljs.core.first(")
+      (emits "local " param " = cljs.core.first(")
       (dotimes [_ i] (emits "cljs.core.next("))
       (emits arglist ")")
       (dotimes [_ i] (emits ")"))
-      (emitln ";"))
+      (emitln ""))
     (if (< 1 (count params))
       (do
-        (emits "var " (last params) " = cljs.core.rest(")
+        (emits "local " (last params) " = cljs.core.rest(")
         (dotimes [_ (- (count params) 2)] (emits "cljs.core.next("))
         (emits arglist)
         (dotimes [_ (- (count params) 2)] (emits ")"))
-        (emitln ");")
-        (emitln "return " delegate-name ".call(" (string/join ", " (cons "this" params)) ");"))
+        (emitln ")")
+        (emitln "return " delegate-name "(" (comma-sep params) ")"))
       (do
-        (emits "var " (last params) " = ")
-        (emits "cljs.core.seq(" arglist ");")
-        (emitln ";")
-        (emitln "return " delegate-name ".call(" (string/join ", " (cons "this" params)) ");")))
-    (emits "})")))
+        (emits "local " (last params) " = ")
+        (emits "cljs.core.seq(" arglist ")")
+        (emitln "")
+        (emitln "return " delegate-name "(" (comma-sep params) ")")))
+    (emits "end)")))
 
 (defn emit-fn-method
   [{:keys [gthis name variadic params statements ret env recurs max-fixed-arity]}]
   (emit-wrap env
-             (emitln "(function " name "(" (comma-sep params) "){")
+             (emitln "(function " name "(" (comma-sep params) ")")
              (when gthis
-               (emitln "var " gthis " = this;"))
-             (when recurs (emitln "while(true){"))
+               (emitln "local " gthis " = this;"))
+             (when recurs (emitln "while (true) do"))
              (emit-block :return statements ret)
              (when recurs
-               (emitln "break;")
-               (emitln "}"))
-             (emits "})")))
+               (emitln "break")
+               (emitln "end"))
+             (emits "end)")))
 
 (defn emit-variadic-fn-method
   [{:keys [gthis name variadic params statements ret env recurs max-fixed-arity] :as f}]
   (emit-wrap env
              (let [name (or name (gensym))
                    delegate-name (str name "__delegate")]
-               (emitln "(function() { ")
-               (emitln "var " delegate-name " = function (" (comma-sep params) "){")
-               (when recurs (emitln "while(true){"))
+               (emitln "(function() ")
+               (emitln "local " delegate-name " = function (" (comma-sep params) ")")
+               (when recurs (emitln "while true do"))
                (emit-block :return statements ret)
                (when recurs
-                 (emitln "break;")
-                 (emitln "}"))
-               (emitln "};")
+                 (emitln "break")
+                 (emitln "end"))
+               (emitln "end")
 
-               (emitln "var " name " = function (" (comma-sep
+               (emitln "local " name " = function (" (comma-sep
                                                      (if variadic
-                                                       (concat (butlast params) ['var_args])
-                                                       params)) "){")
+                                                       (concat (butlast params) ["..."])
+                                                       params)) ")")
                (when gthis
-                 (emitln "var " gthis " = this;"))
+                 (emitln "local " gthis " = this"))
                (when variadic
-                 (emitln "var " (last params) " = null;")
-                 (emitln "if (goog.isDef(var_args)) {")
-                 (emitln "  " (last params) " = cljs.core.array_seq(Array.prototype.slice.call(arguments, " (dec (count params)) "),0);")
-                 (emitln "} "))
-               (emitln "return " delegate-name ".call(" (string/join ", " (cons "this" params)) ");")
-               (emitln "};")
+                 (emitln "local " (last params) " = null;")
+                 (emitln "if (var_args) then")
+                 (emitln "  " (last params) " = cljs.core.array_seq({...})")
+                 (emitln "end"))
+               (emitln "return " delegate-name "(" (comma-sep params) ")")
+               (emitln "end")
 
-               (emitln name ".cljs$lang$maxFixedArity = " max-fixed-arity ";")
-               (emits name ".cljs$lang$applyTo = ")
+               (emitln name ".cljs__lang__maxFixedArity = " max-fixed-arity)
+               (emits name ".cljs__lang__applyTo = ")
                (emit-apply-to (assoc f :name name))
-               (emitln ";")
-               (emitln "return " name ";")
+               (emitln "")
+               (emitln "return " name)
                (emitln "})()"))))
 
 (defmethod emit :fn
   [{:keys [name env methods max-fixed-arity variadic recur-frames loop-lets]}]
   ;;fn statements get erased, serve no purpose and can pollute scope if named
-  (when-not (= :statement (:context env))
+  (when-not false ;;(= :statement (:context env))
     (let [loop-locals (seq (concat
                             (mapcat :names (filter #(and % @(:flag %)) recur-frames))
                             (mapcat :names loop-lets)))]
       (when loop-locals
         (when (= :return (:context env))
             (emits "return "))
-        (emitln "((function (" (comma-sep loop-locals) "){")
+        (emitln "((function (" (comma-sep loop-locals) ")")
         (when-not (= :return (:context env))
-            (emits "return ")))
+          (emits "return ")))
+      
       (if (= 1 (count methods))
         (if variadic
           (emit-variadic-fn-method (assoc (first methods) :name name))
@@ -536,49 +543,62 @@
               name (or name (gensym))
               maxparams (apply max-key count (map :params methods))
               mmap (into {}
-                     (map (fn [method]
-                            [(symbol (str name "__" (count (:params method))))
-                             method])
-                          methods))
-              ms (sort-by #(-> % second :params count) (seq mmap))]
+                         (map (fn [method]
+                                [(symbol (str name "__" (count (:params method))))
+                                 method])
+                              methods))
+              ms (sort-by #(-> % second :params count) (seq mmap))
+              argnumsym (gensym "argnum")
+              gen-fn-name (gensym "gen_fn")]
+          
           (when (= :return (:context env))
             (emits "return "))
-          (emitln "(function() {")
-          (emitln "var " name " = null;")
+          (emitln "(function() ")
+          (emitln "local " name " = {}")
+          
           (doseq [[n meth] ms]
-            (emits "var " n " = ")
+            (emits "local " n " = ")
             (if (:variadic meth)
               (emit-variadic-fn-method meth)
               (emit-fn-method meth))
             (emitln ";"))
-            (emitln name " = function(" (comma-sep (if variadic
-                                                     (concat (butlast maxparams) ['var_args])
-                                                     maxparams)) "){")
+          
+          (emitln gen-fn-name " = function(tbl, ...) ")
+          
           (when variadic
-            (emitln "var " (last maxparams) " = var_args;"))
-          (emitln "switch(arguments.length){")
-          (doseq [[n meth] ms]
-            (if (:variadic meth)
-              (do (emitln "default:")
-                  (emitln "return " n ".apply(this,arguments);"))
-              (let [pcnt (count (:params meth))]
-                (emitln "case " pcnt ":")
-                (emitln "return " n ".call(this" (if (zero? pcnt) nil
-                                                     (list "," (comma-sep (take pcnt maxparams)))) ");"))))
-          (emitln "}")
-          (emitln "throw('Invalid arity: ' + arguments.length);")
-          (emitln "};")
+            (emitln "local " (last maxparams) " = var_args;"))
+          (emitln "local " argnumsym " = select(\"#\", ...)")
+          
+          (let [emit-if-branch
+                (fn [fst? [n meth]]
+                    (if (:variadic meth)
+                      (emitln "else return " n "(...)")                      
+                      (let [pcnt (count (:params meth))]
+                        (emitln (if fst? "if " "elseif ") argnumsym " == " pcnt
+                                " then return " n "(...)"))))]
+            (emit-if-branch true (first ms))
+            (doseq [m (rest ms)] (emit-if-branch false m)))
+            
+          (emitln "end")
+          (emitln "error('Invalid arity: ' + " argnumsym ")")
+          (emitln "end")
+
+          (emitln "setmetatable(" name ", {__call = " gen-fn-name "})")
+
           (when variadic
-            (emitln name ".cljs$lang$maxFixedArity = " max-fixed-arity ";")
-            (emitln name ".cljs$lang$applyTo = " (some #(let [[n m] %] (when (:variadic m) n)) ms) ".cljs$lang$applyTo;"))
+            (emitln name ".cljs__lang__maxFixedArity = " max-fixed-arity ";")
+            (emitln name ".cljs__lang__applyTo = " (some #(let [[n m] %] (when (:variadic m) n)) ms) ".cljs__lang__applyTo;"))
+            
           (when has-name?
             (doseq [[n meth] ms]
               (let [c (count (:params meth))]
-               (emitln name ".cljs$lang$arity$" c " = " n ";"))))
-          (emitln "return " name ";")
-          (emitln "})()")))
+                (emitln name ".cljs__lang__arity__" c " = " n))))
+          
+          (emitln "return " name)
+          (emitln "end)()")))
+      
       (when loop-locals
-        (emitln ";})(" (comma-sep loop-locals) "))")))))
+        (emitln "end)(" (comma-sep loop-locals) "))")))))
 
 (defmethod emit :do
   [{:keys [statements ret env]}]
@@ -621,28 +641,28 @@
 (defmethod emit :let
   [{:keys [bindings statements ret env loop]}]
   (let [context (:context env)]
-    (when (= :expr context) (emits "(function (){"))
+    (when (= :expr context) (emitln "(function ()"))
     (doseq [{:keys [name init]} bindings]
-      (emitln "var " name " = " init ";"))
-    (when loop (emitln "while(true){"))
+      (emitln "local " name " = " init ""))
+    (when loop (emitln "while true do"))
     (emit-block (if (= :expr context) :return context) statements ret)
     (when loop
-      (emitln "break;")
-      (emitln "}"))
+      (emitln "break")
+      (emitln "end"))
     ;(emits "}")
-    (when (= :expr context) (emits "})()"))))
+    (when (= :expr context) (emits "end)()"))))
 
 (defmethod emit :recur
   [{:keys [frame exprs env]}]
   (let [temps (vec (take (count exprs) (repeatedly gensym)))
         names (:names frame)]
-    (emitln "{")
+    (emitln "do")
     (dotimes [i (count exprs)]
-      (emitln "var " (temps i) " = " (exprs i) ";"))
+      (emitln "local " (temps i) " = " (exprs i) ))
     (dotimes [i (count exprs)]
-      (emitln (names i) " = " (temps i) ";"))
-    (emitln "continue;")
-    (emitln "}")))
+      (emitln (names i) " = " (temps i) ))
+    (emitln "continue")
+    (emitln "end")))
 
 (defmethod emit :invoke
   [{:keys [f args env]}]
@@ -660,19 +680,16 @@
                 (let [arities (map count mps)]
                   (if (some #{arity} arities)
                     (update-in f [:info :name]
-                               (fn [name] (symbol (str name ".cljs$lang$arity$" arity))))
+                               (fn [name] (symbol (str name ".cljs__lang__arity__" arity))))
                     f))))
             f)]
     (emit-wrap env
-      (emits f (when-not (or fn? js?) ".call") "("
-                 (let [args (if (or fn? js?) args (cons "null" args))]
-                   (comma-sep args))
-                 ")"))))
+      (emits f "(" (let [args args] (comma-sep args)) ")"))))
 
 (defmethod emit :new
   [{:keys [ctor args env]}]
   (emit-wrap env
-             (emits "(new " ctor "("
+             (emits ctor "({}, "
                     (comma-sep args)
                     "))")))
 
@@ -691,14 +708,11 @@
 (defmethod emit :deftype*
   [{:keys [t fields]}]
   (let [fields (map munge fields)]
-    (emitln "")
-    (emitln "/**")
-    (emitln "* @constructor")
-    (emitln "*/")
-    (emitln t " = (function (" (comma-sep (map str fields)) "){")
+    (emitln t " = (function (this, " (comma-sep (map str fields)) ") ")
     (doseq [fld fields]
-      (emitln "this." fld " = " fld ";"))
-    (emitln "})")))
+      (emitln "this." fld " = " fld ))
+    (emitln "return this")
+    (emitln "end)")))
 
 (defmethod emit :defrecord*
   [{:keys [t fields]}]
@@ -713,7 +727,7 @@
     (emitln "*/")
     (emitln t " = (function (" (comma-sep (map str fields)) "){")
     (doseq [fld fields]
-      (emitln "this." fld " = " fld ";"))
+      (emitln "this." fld " = " fld ))
     (emitln "if(arguments.length>" (- (count fields) 2) "){")
     (emitln "this.__meta = __meta;")
     (emitln "this.__extmap = __extmap;")
@@ -1389,7 +1403,7 @@
           (if (seq forms)
             (let [env {:ns (@namespaces *cljs-ns*) :context :statement :locals {}}
                   ast (analyze env (first forms))]
-              (do (emit ast)
+              (do (emit /ast)
                   (if (= (:op ast) :ns)
                     (recur (rest forms) (:name ast) (merge (:uses ast) (:requires ast)))
                     (recur (rest forms) ns-name deps))))
@@ -1491,6 +1505,9 @@
              (recur (rest cljs-files) (conj output-files (assoc ns-info :file-name (.getPath output-file)))))
            output-files)))))
 
+(defmacro js [form]
+  `(emit (analyze {:ns (@namespaces 'cljs.user) :context :statement :locals {}} '~form)))
+
 (comment
   ;; compile-root
   ;; If you have a standard project layout with all file in src
@@ -1589,6 +1606,7 @@
 
 (js (if a b c))
 (js (def x 42))
+(js (defn foo [a b & c] a))
 (js (defn foo [a b] a))
 (js (do 1 2 3))
 (js (let [a 1 b 2 a b] a))
@@ -1603,6 +1621,7 @@
 (jseval '(defn foo [x y] (if true 46 (recur 1 x))))
 (jseval '(foo 1 2))
 (js (and fred ethel))
+(js (defn andtest [fred ethel] (and fred ethel)))
 (jseval '(ns fred (:require [your.ns :as yn]) (:require-macros [cljs.core :as core])))
 (js (def x 42))
 (jseval '(def x 42))
@@ -1637,10 +1656,17 @@
 (js (fn ([t] t) ([x y] y) ([ a b & zs] b)))
 
 (js (. (fn foo ([t] t) ([x y] y) ([a b & zs] b)) call nil 1 2))
-(js (fn foo
+
+(js (defn foo
       ([t] t)
-      ([x y] y)
-      ([ a b & zs] b)))
+      ([ a b & zs] b)
+      ([x y] y)))
+
+(js (do
+      (defn foo
+        ([t] t)
+        ([x y] y))
+      (foo 1 2)))
 
 (js ((fn foo
        ([t] (foo t nil))
@@ -1658,7 +1684,7 @@
 (js (cljs.core/deftype Foo [a b c] Fred (fred [x] a) (fred [x y] a)  (ethel [x] c) Ethel (foo [] d)))
 (jseval '(cljs.core/deftype Foo [a b c] Fred (fred [x] a) (fred [x y] a)  (ethel [x] c) Ethel (foo [] d)))
 
-(js (do
+(js (do 
            (defprotocol Proto (foo [this]))
            (deftype Type [a] Proto (foo [this] a))
            (foo (new Type 42))))

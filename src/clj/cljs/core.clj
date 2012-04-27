@@ -202,7 +202,7 @@
   (list 'js* "(1 << ~{})" `(mask ~hash ~shift)))
 
 (defn- protocol-prefix [psym]
-  (str (.replace (str psym) \. \$) "$"))
+  (str (.replace (str psym) \. \_) "__"))
 
 (def #^:private base-type
      {nil "null"
@@ -286,11 +286,11 @@
                                                   [`(set! ~(symbol pf) (fn ~@meths))]
                                                   
                                                   (vector? (first meths))
-                                                  [`(set! ~(symbol (str pf "$arity$" (count (first meths)))) (fn ~@meths))]
+                                                  [`(set! ~(symbol (str pf "__arity__" (count (first meths)))) (fn ~@meths))]
 
                                                   :else
                                                   (map (fn [[sig & body :as meth]]
-                                                         `(set! ~(symbol (str pf "$arity$" (count sig)))
+                                                         `(set! ~(symbol (str pf "__arity__" (count sig)))
                                                                 (fn ~meth)))
                                                        meths))))
                                              sigs)))))]
@@ -317,12 +317,12 @@
     (if (seq impls)
       `(do
          (deftype* ~t ~fields)
-         (set! (.-cljs$core$IPrintable$_pr_seq ~t) (fn [this#] (list ~(str r))))
+         (set! (.-cljs_core_IPrintable__pr_seq ~t) (fn [this#] (list ~(str r))))
          (extend-type ~t ~@(dt->et impls))
          ~t)
       `(do
          (deftype* ~t ~fields)
-         (set! (.-cljs$core$IPrintable$_pr_seq ~t) (fn [this#] (list ~(str r))))
+         (set! (.-cljs_core_IPrintable__pr_seq ~t) (fn [this#] (list ~(str r))))
          ~t))))
 
 (defn- emit-defrecord
@@ -427,7 +427,7 @@
   (let [r (:name (cljs.compiler/resolve-var (dissoc &env :locals) rsym))]
     `(let []
        ~(emit-defrecord rsym r fields impls)
-       (set! (.-cljs$core$IPrintable$_pr_seq ~r) (fn [this#] (list ~(str r))))
+       (set! (.-cljs_core_IPrintable__pr_seq ~r) (fn [this#] (list ~(str r))))
        ~(build-positional-factory rsym r fields)
        ~(build-map-factory rsym r fields)
        ~r)))
@@ -443,7 +443,7 @@
                        (if (and ~(first sig) (. ~(first sig) ~(symbol (str "-" slot)))) ;; Property access needed here.
                          (. ~(first sig) ~slot ~@sig)
                          ((or
-                           (aget ~(fqn fname) (goog.typeOf ~(first sig)))
+                           (aget ~(fqn fname) (cljs.core.luaops.type ~(first sig)))
                            (aget ~(fqn fname) "_")
                            (throw (missing-protocol
                                     ~(str psym "." fname) ~(first sig))))
@@ -453,7 +453,7 @@
                        slot (symbol (str prefix (name fname)))]
                    `(defn ~fname ~@(map (fn [sig]
                                           (expand-sig fname
-                                                      (symbol (str slot "$arity$" (count sig)))
+                                                      (symbol (str slot "__arity__" (count sig)))
                                                       sig))
                                         sigs))))]
     `(do
