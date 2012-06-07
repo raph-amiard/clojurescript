@@ -22,7 +22,15 @@
 (declare confirm-bindings)
 (declare munge)
 (declare ^:dynamic *cljs-file*)
-(require 'cljs.core)
+(def ^:dynamic *core-ns* 'cljs.core)
+(def -is-init (atom false))
+
+(defn init []
+  (when-not @-is-init
+    (require *core-ns*)
+    (defonce namespaces (atom {*core-ns* {:name *core-ns*}
+                               'cljs.user {:name 'cljs.user}}))
+    (reset! -is-init true)))
 
 (def js-reserved
   #{"abstract" "boolean" "break" "byte" "case"
@@ -40,13 +48,10 @@
 
 (def cljs-reserved-file-names #{"deps.cljs"})
 
-(defonce namespaces (atom '{cljs.core {:name cljs.core}
-                            cljs.user {:name cljs.user}}))
-
 (defn reset-namespaces! []
   (reset! namespaces
-    '{cljs.core {:name cljs.core}
-      cljs.user {:name cljs.user}}))
+    {*core-ns* {:name *core-ns*}
+     'cljs.user {:name 'cljs.user}}))
 
 (def ^:dynamic *cljs-ns* 'cljs.user)
 (def ^:dynamic *cljs-file* nil)
@@ -94,7 +99,7 @@
 (defn core-name?
   "Is sym visible from core in the current compilation namespace?"
   [env sym]
-  (and (get (:defs (@namespaces 'cljs.core)) sym)
+  (and (get (:defs (@namespaces *core-ns*)) sym)
        (not (contains? (-> env :ns :excludes) sym))))
 
 (defn resolve-existing-var [env sym]
@@ -107,7 +112,7 @@
 
        (namespace sym)
        (let [ns (namespace sym)
-             ns (if (= "clojure.core" ns) "cljs.core" ns)
+             ns (if (= "clojure.core" ns) (str *core-ns*) ns)
              full-ns (resolve-ns-alias env ns)]
          (confirm-var-exists env full-ns (symbol (name sym)))
          (merge (get-in @namespaces [full-ns :defs (symbol (name sym))])
@@ -136,7 +141,7 @@
 
        :else
        (let [full-ns (if (core-name? env sym)
-                       'cljs.core
+                       *core-ns*
                        (-> env :ns :name))]
          (confirm-var-exists env full-ns sym)
          (merge (get-in @namespaces [full-ns :defs sym])
@@ -154,7 +159,7 @@
        (namespace sym)
        (let [ns (namespace sym)
              ns (if (= "clojure.core" ns) "cljs.core" ns)]
-         {:name (symbol (str (resolve-ns-alias env ns) "." (name sym)))})
+         {:name (symbol (str (resolve-ns-alias env ns) "." (munge (name sym))))})
 
        (.contains s ".")
        (let [idx (.indexOf s ".")
@@ -173,7 +178,7 @@
 
        :else
        (let [s (str (if (core-name? env sym)
-                      'cljs.core
+                      *core-ns*
                       (-> env :ns :name))
                     "." (name sym))]
          {:name (symbol s)})))))
@@ -214,6 +219,9 @@
 
 (defn- wrap-in-double-quotes [x]
   (str \" x \"))
+
+(defn core-ns-op [op]
+  (str *core-ns* "." op))
 
 (defmulti emit :op)
 
@@ -279,42 +287,42 @@
 (defn- emit-meta-constant [x & body]
   (if (meta x)
     (do
-      (emits "cljs.core.with_meta(" body ",")
+      (emits *core-ns* ".with_meta(" body ",")
       (emit-constant (meta x))
       (emits ")"))
     (emits body)))
 
 (defmethod emit-constant clojure.lang.PersistentList$EmptyList [x]
-  (emit-meta-constant x "cljs.core.List.EMPTY"))
+  (emit-meta-constant x (core-ns-op "List.EMPTY")))
 
 (defmethod emit-constant clojure.lang.PersistentList [x]
   (emit-meta-constant x
-    (concat ["cljs.core.list("]
+    (concat [(core-ns-op "list(")]
             (comma-sep (map #(fn [] (emit-constant %)) x))
             [")"])))
 
 (defmethod emit-constant clojure.lang.Cons [x]
   (emit-meta-constant x
-    (concat ["cljs.core.list("]
+    (concat [(core-ns-op "list(")]
             (comma-sep (map #(fn [] (emit-constant %)) x))
             [")"])))
 
 (defmethod emit-constant clojure.lang.IPersistentVector [x]
   (emit-meta-constant x
-    (concat ["cljs.core.vec(["]
+    (concat [(core-ns-op "vec([")]
             (comma-sep (map #(fn [] (emit-constant %)) x))
             ["])"])))
 
 (defmethod emit-constant clojure.lang.IPersistentMap [x]
   (emit-meta-constant x
-    (concat ["cljs.core.hash_map("]
+    (concat [(core-ns-op ".hash_map(")]
             (comma-sep (map #(fn [] (emit-constant %))
                             (apply concat x)))
             [")"])))
 
 (defmethod emit-constant clojure.lang.PersistentHashSet [x]
   (emit-meta-constant x
-    (concat ["cljs.core.set(["]
+    (concat [(core-ns-op ".set([")]
             (comma-sep (map #(fn [] (emit-constant %)) x))
             ["])"])))
 
@@ -340,7 +348,7 @@
 (defmethod emit :meta
   [{:keys [expr meta env]}]
   (emit-wrap env
-    (emits "cljs.core.with_meta(" expr "," meta ")")))
+    (emits *core-ns* ".with_meta(" expr "," meta ")")))
 
 (def ^:private array-map-threshold 16)
 (def ^:private obj-map-threshold 32)
@@ -350,7 +358,7 @@
   (emit-wrap env
     (cond
       (and simple-keys? (<= (count keys) obj-map-threshold))
-      (emits "cljs.core.ObjMap.fromObject(["
+      (emits *core-ns* ".ObjMap.fromObject(["
              (comma-sep keys) ; keys
              "],{"
              (comma-sep (map (fn [k v]
@@ -359,14 +367,14 @@
              "})")
 
       (<= (count keys) array-map-threshold)
-      (emits "cljs.core.PersistentArrayMap.fromArrays(["
+      (emits *core-ns* ".PersistentArrayMap.fromArrays(["
              (comma-sep keys)
              "],["
              (comma-sep vals)
              "])")
 
       :else
-      (emits "cljs.core.PersistentHashMap.fromArrays(["
+      (emits *core-ns* ".PersistentHashMap.fromArrays(["
              (comma-sep keys)
              "],["
              (comma-sep vals)
@@ -376,14 +384,14 @@
   [{:keys [items env]}]
   (emit-wrap env
     (if (empty? items)
-      (emits "cljs.core.PersistentVector.EMPTY")
-      (emits "cljs.core.PersistentVector.fromArray(["
+      (emits "*core-ns* ".PersistentVector.EMPTY")
+      (emits *core-ns* ".PersistentVector.fromArray(["
              (comma-sep items) "], true)"))))
 
 (defmethod emit :set
   [{:keys [items env]}]
   (emit-wrap env
-    (emits "cljs.core.set(["
+    (emits *core-ns* ".set(["
            (comma-sep items) "])")))
 
 (defmethod emit :constant
@@ -423,10 +431,10 @@
   (let [context (:context env)
         checked (not (or unchecked (safe-test? test)))]
     (if (= :expr context)
-      (emits "(" (when checked "cljs.core.truth_") "(" test ")?" then ":" else ")")
+      (emits "(" (when checked (core-ns-op "truth_")) "(" test ")?" then ":" else ")")
       (do
         (if checked
-          (emitln "if(cljs.core.truth_(" test "))")
+          (emitln "if(" *core-ns* ".truth_(" test "))")
           (emitln "if(" test ")"))
         (emitln "{" then "} else")
         (emitln "{" else "}")))))
@@ -471,22 +479,22 @@
         params (map munge params)]
     (emitln "(function (" arglist "){")
     (doseq [[i param] (map-indexed vector (butlast params))]
-      (emits "var " param " = cljs.core.first(")
-      (dotimes [_ i] (emits "cljs.core.next("))
+      (emits "var " param " = " *core-ns* ".first(")
+      (dotimes [_ i] (emits *core-ns* ".next("))
       (emits arglist ")")
       (dotimes [_ i] (emits ")"))
       (emitln ";"))
     (if (< 1 (count params))
       (do
-        (emits "var " (last params) " = cljs.core.rest(")
-        (dotimes [_ (- (count params) 2)] (emits "cljs.core.next("))
+        (emits "var " (last params) " = " *core-ns* ".rest(")
+        (dotimes [_ (- (count params) 2)] (emits *core-ns* ".next("))
         (emits arglist)
         (dotimes [_ (- (count params) 2)] (emits ")"))
         (emitln ");")
         (emitln "return " delegate-name "(" (string/join ", " params) ");"))
       (do
         (emits "var " (last params) " = ")
-        (emits "cljs.core.seq(" arglist ");")
+        (emits *core-ns* ".seq(" arglist ");")
         (emitln ";")
         (emitln "return " delegate-name "(" (string/join ", " params) ");")))
     (emits "})")))
@@ -529,7 +537,7 @@
                (when variadic
                  (emitln "var " (last params) " = null;")
                  (emitln "if (goog.isDef(var_args)) {")
-                 (emitln "  " (last params) " = cljs.core.array_seq(Array.prototype.slice.call(arguments, " (dec (count params)) "),0);")
+                 (emitln "  " (last params) " = " *core-ns* ".array_seq(Array.prototype.slice.call(arguments, " (dec (count params)) "),0);")
                  (emitln "} "))
                (emitln "return " delegate-name ".call(" (string/join ", " (cons "this" params)) ");")
                (emitln "};")
@@ -592,7 +600,7 @@
                   (emitln "return " n ".cljs$lang$arity$variadic("
                           (comma-sep (butlast maxparams))
                           (and (> (count maxparams) 1) ", ")
-                          "cljs.core.array_seq(arguments, " max-fixed-arity "));"))
+                          *core-ns* ".array_seq(arguments, " max-fixed-arity "));"))
               (let [pcnt (count (:params meth))]
                 (emitln "case " pcnt ":")
                 (emitln "return " n ".call(this" (if (zero? pcnt) nil
@@ -735,13 +743,13 @@
        (emits "!(" (first args) ")")
 
        keyword?
-       (emits "(new cljs.core.Keyword(" f ")).call(" (comma-sep (cons "null" args)) ")")
+       (emits "(new " *core-ns* ".Keyword(" f ")).call(" (comma-sep (cons "null" args)) ")")
        
        variadic-invoke
        (let [mfa (:max-fixed-arity variadic-invoke)]
         (emits f "(" (comma-sep (take mfa args))
                (when-not (zero? mfa) ",")
-               "cljs.core.array_seq([" (comma-sep (drop mfa args)) "], 0))"))
+               *core-ns* ".array_seq([" (comma-sep (drop mfa args)) "], 0))"))
        
        (or fn? js? goog?)
        (emits f "(" (comma-sep args)  ")")
@@ -766,8 +774,8 @@
 (defmethod emit :ns
   [{:keys [name requires uses requires-macros env]}]
   (emitln "goog.provide('" (munge name) "');")
-  (when-not (= name 'cljs.core)
-    (emitln "goog.require('cljs.core');"))
+  (when-not (= name *core-ns*)
+    (emitln "goog.require('" *core-ns* "');"))
   (doseq [lib (into (vals requires) (distinct (vals uses)))]
     (emitln "goog.require('" (munge lib) "');")))
 
@@ -921,7 +929,7 @@
         dynamic (-> sym meta :dynamic)
         ns-name (-> env :ns :name)]
     (assert (not (namespace sym)) "Can't def ns-qualified name")
-    (let [env (if (or (and (not= ns-name 'cljs.core)
+    (let [env (if (or (and (not= ns-name *core-ns*)
                            (core-name? env sym))
                       (get-in @namespaces [ns-name :uses sym]))
                 (let [ev (resolve-existing-var (dissoc env :locals) sym)]
@@ -1237,7 +1245,7 @@
     (when (seq @deps)
       (analyze-deps @deps))
     (set! *cljs-ns* name)
-    (require 'cljs.core)
+    (require *core-ns*)
     (doseq [nsym (concat (vals requires-macros) (vals uses-macros))]
       (clojure.core/require nsym))
     (swap! namespaces #(-> %
@@ -1417,14 +1425,14 @@
                                     (get-in @namespaces [(-> env :ns :name) :uses-macros sym])))))
           (if-let [nstr (namespace sym)]
             (when-let [ns (cond
-                           (= "clojure.core" nstr) (find-ns 'cljs.core)
+                           (= "clojure.core" nstr) (find-ns *core-ns*)
                            (.contains nstr ".") (find-ns (symbol nstr))
                            :else
                            (-> env :ns :requires-macros (get (symbol nstr))))]
               (.findInternedVar ^clojure.lang.Namespace ns (symbol (name sym))))
             (if-let [nsym (-> env :ns :uses-macros sym)]
               (.findInternedVar ^clojure.lang.Namespace (find-ns nsym) sym)
-              (.findInternedVar ^clojure.lang.Namespace (find-ns 'cljs.core) sym))))]
+              (.findInternedVar ^clojure.lang.Namespace (find-ns *core-ns*) sym))))]
     (when (and mvar (.isMacro ^clojure.lang.Var mvar))
       @mvar)))
 
@@ -1577,7 +1585,7 @@
 (defmacro with-core-cljs
   "Ensure that core.cljs has been loaded."
   [& body]
-  `(do (when-not (:defs (get @namespaces 'cljs.core))
+  `(do (when-not (:defs (get @namespaces *core-ns*))
          (analyze-file "cljs/core.cljs"))
        ~@body))
 
@@ -1603,7 +1611,7 @@
                     (recur (rest forms) ns-name deps))))
             {:ns (or ns-name 'cljs.user)
              :provides [ns-name]
-             :requires (if (= ns-name 'cljs.core) (set (vals deps)) (conj (set (vals deps)) 'cljs.core))
+             :requires (if (= ns-name *core-ns*) (set (vals deps)) (conj (set (vals deps)) *core-ns*))
              :file dest}))))))
 
 (defn requires-compilation?
