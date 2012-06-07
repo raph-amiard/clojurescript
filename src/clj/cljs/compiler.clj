@@ -1587,9 +1587,9 @@
       (binding [*out* out
                 *cljs-ns* 'cljs.user
                 *cljs-file* (.getPath ^java.io.File src)
-                *data-readers* {'queue read-queue
-                                'uuid  read-uuid
-                                'inst  read-inst}
+                *cljs-data-readers* {'queue read-queue
+                                     'uuid  read-uuid
+                                     'inst  read-inst}
                 *position* (atom [0 0])]
         (loop [forms (forms-seq src)
                ns-name nil
