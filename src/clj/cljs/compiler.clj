@@ -384,7 +384,7 @@
   [{:keys [items env]}]
   (emit-wrap env
     (if (empty? items)
-      (emits "*core-ns* ".PersistentVector.EMPTY")
+      (emits *core-ns* ".PersistentVector.EMPTY")
       (emits *core-ns* ".PersistentVector.fromArray(["
              (comma-sep items) "], true)"))))
 
