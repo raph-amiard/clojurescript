@@ -1517,6 +1517,7 @@
      (let [form (if (instance? clojure.lang.LazySeq form)
                   (or (seq form) ())
                   form)]
+       (init)
        (cond
         (symbol? form) (analyze-symbol env form)
         (and (seq? form) (seq form)) (analyze-seq env form name)
