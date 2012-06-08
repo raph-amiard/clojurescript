@@ -1193,9 +1193,7 @@
   (clojure.lang.Compiler/munge (str s)))
 
 (defn ns->relpath [s]
-  (let [path (str (string/replace (munge-path s) \. \/) ".cljs")]
-    (println path)
-    path))
+  (str (string/replace (munge-path s) \. \/) ".cljs"))
 
 (declare analyze-file)
 
